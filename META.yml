@@ -1,0 +1,15 @@
+--- #YAML:1.0
+name:                HTML-Query
+version:             0.01
+abstract:            perform jQuery-like queries on HTML::Element trees
+license:             perl
+author:              
+    - Andy Wardley <abw@wardley.org>
+generated_by:        ExtUtils::MakeMaker version 6.44
+distribution_type:   module
+requires:     
+    Badger:                        0.03
+    HTML::Tree:                    3.23
+meta-spec:
+    url:     http://module-build.sourceforge.net/META-spec-v1.3.html
+    version: 1.3
