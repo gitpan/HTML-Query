@@ -5,7 +5,7 @@ use ExtUtils::MakeMaker;
 
 my %opts = (
     'NAME'         => 'HTML-Query',
-    'VERSION'      => '0.01',
+    'VERSION'      => '0.02',
     'PMLIBDIRS'    => [ 'lib' ], 
     'PREREQ_PM'    => { 
         'HTML::Tree'  => 3.23,

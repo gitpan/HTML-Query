@@ -1,7 +1,7 @@
 package HTML::Query;
 
 use Badger::Class
-    version   => 0.01,
+    version   => 0.02,
     debug     => 0,
     base      => 'Badger::Base',
     utils     => 'blessed',
@@ -159,13 +159,13 @@ sub query {
             }
         
             # that can be followed by (or the query can start with) a #id
-            if ($query =~ / \G \# (\w+) /cgx) {
+            if ($query =~ / \G \# ([\w\-]+) /cgx) {
                 push( @args, id => $1 );
             }
         
             # and/or a .class 
-            if ($query =~ / \G \. (\w+) /cgx) {
-                push( @args, class => $1 );
+            if ($query =~ / \G \. ([\w\-]+) /cgx) {
+                push( @args, class => qr/ (^|\s+) $1 ($|\s+) /x );
             }
         
             # and/or none or more [ ] attribute specs
@@ -270,7 +270,7 @@ sub AUTOLOAD {
     # we allow Perl to catch any unknown methods that the user might
     # try to call against the HTML::Element objects in the query
     my @results = 
-        map  { $_->$method }
+        map  { $_->$method(@_) }
         @$self;
     
     return wantarray

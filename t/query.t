@@ -14,7 +14,7 @@ use lib qw( ./lib ../lib );
 use HTML::TreeBuilder;
 use Badger::Filesystem '$Bin Dir';
 use Badger::Test
-    tests => 48,
+    tests => 55,
     debug => 'HTML::Query',
     args  => \@ARGV;
 
@@ -189,3 +189,17 @@ ok( ! $query->try( query => '  ' ), 'blank query failed' );
 is( $query->reason, 'html.query error - Invalid query specified:   ', 'got blank query error message' );
 
 
+#-----------------------------------------------------------------------
+# check id/class with minus-character
+#-----------------------------------------------------------------------
+
+my @found = $query->query('#test-id');
+is( scalar(@found), 1, 'found element with id "test-id"' );
+is( $found[0]->as_trimmed_text, 'test-id content', 'got right element' );
+
+@found = $query->query('.new-class');
+is( scalar(@found), 4, 'found all elements with class "new-class"' );
+is( $found[0]->as_trimmed_text, 'This is another div with bar class', 'got right 1st element' );
+is( $found[1]->as_trimmed_text, 'This is a span with bar class', 'got right 2nd element' );
+is( $found[2]->as_trimmed_text, 'Wobble1', 'got right 3rd element' );
+is( $found[3]->as_trimmed_text, 'test-id content', 'got right 4th element' );
