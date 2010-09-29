@@ -1,7 +1,9 @@
 package HTML::Query;
 
+our $VERSION = '0.03';
+
 use Badger::Class
-    version   => 0.02,
+    version   => $VERSION,
     debug     => 0,
     base      => 'Badger::Base',
     utils     => 'blessed',
@@ -68,21 +70,21 @@ sub new {
     my ($element, @elements, $type, $code, $select);
 
     # expand a single list ref into items
-    unshift @_, @{ shift @_ } 
+    unshift @_, @{ shift @_ }
         if @_ == 1 && ref $_[0] eq ARRAY;
 
     $class = ref $class || $class;
-    
+
     # each element should be an HTML::Element object, although we might
     # want to subclass this module to recognise a different kind of object,
-    # so we get the element class from the ELEMENT constant method which a 
+    # so we get the element class from the ELEMENT constant method which a
     # subclass can re-define.
     my $element_class = $class->ELEMENT;
-    
+
     while (@_) {
         $element = shift;
-        $class->debug("argument: $element") if DEBUG;
-        
+        $class->debug("argument: ".$element) if DEBUG;
+
         if (! ref $element) {
             # a non-reference item is a source type (text, file, tree)
             # followed by the source, or if it's the last argument following
@@ -117,9 +119,9 @@ sub new {
 
         return $class->error_msg( bad_element => $element );
     }
-        
+
     my $self = bless \@elements, $class;
-    
+
     return defined $select
         ? $self->query($select)
         : $self;
@@ -131,73 +133,157 @@ sub query {
     my @result;
     my $ops = 0;
     my $pos = 0;
-    
+
     return $self->error_msg('no_query')
         unless defined $query
             && length  $query;
 
     # multiple specs can be comma separated, e.g. "table tr td, li a, div.foo"
     COMMA: while (1) {
-        # each comma-separated traversal spec is applied downward from 
+        # each comma-separated traversal spec is applied downward from
         # the source elements in the @$self query
         my @elements = @$self;
         my $comops   = 0;
-        
+
         # for each whitespace delimited descendant spec we grok the correct
         # parameters for look_down() and apply them to each source element
         # e.g. "table tr td"
         SEQUENCE: while (1) {
             my @args;
             $pos = pos($query) || 0;
-        
+            my $relationship = '';
+
             # ignore any leading whitespace
             $query =~ / \G \s+ /cgsx;
+
+            # get any relationship modifiers
+            if( $query =~ / \G (>|\*|\+)\s*/cgx ) {
+              # can't have a relationship modifier as the first part of the query
+              $relationship = $1;
+              warn "relationship = $relationship\n" if DEBUG;
+
+              return $self->error_msg( bad_spec => $relationship, $query ) if !$comops;
+            }
 
             # optional leading word is a tag name
             if ($query =~ / \G (\w+) /cgx) {
                 push( @args, _tag => $1 );
             }
-        
+
             # that can be followed by (or the query can start with) a #id
             if ($query =~ / \G \# ([\w\-]+) /cgx) {
                 push( @args, id => $1 );
             }
-        
-            # and/or a .class 
+
+            # and/or a .class
             if ($query =~ / \G \. ([\w\-]+) /cgx) {
                 push( @args, class => qr/ (^|\s+) $1 ($|\s+) /x );
             }
-        
+
             # and/or none or more [ ] attribute specs
             while ($query =~ / \G \[ (.*?) \] /cgx) {
-                my ($name, $value) = split(/\s*=\s*/, $1, 2);
-                if (defined $value) {
+                my $attribute = $1;
+
+                #if we have an operator
+                if ($attribute =~ m/(.*?)\s*([\|\~]?=)\s*(.*)/) {
+                  my ($name,$attribute_op,$value) = ($1,$2,$3);
+                  warn "operator $attribute_op" if DEBUG;
+
+                  if (defined $value) {
                     for ($value) {
                         s/^['"]//;
                         s/['"]$//;
                     }
-                    push( @args, $name => $value);
+                    if ($attribute_op eq '=') {
+                      push( @args, $name => $value);
+                    }
+                    elsif ($attribute_op eq '|=') {
+                      push(@args, $name => qr/\b${value}-?/)
+                    }
+                    elsif ($attribute_op eq '~=') {
+                      push(@args, $name => qr/\b${value}\b/)
+                    }
+                  }
                 }
                 else {
-                    # add a regex to match anything (or nothing)
-                    push( @args, $name => qr/.*/ );
+                  # add a regex to match anything (or nothing)
+                  push( @args, $attribute => qr/.*/ );
                 }
             }
-        
+
             # we must have something in @args by now or we didn't find any
             # valid query specification this time around
             last SEQUENCE unless @args;
-    
+
             $self->debug(
                 'Parsed ', substr($query, $pos, pos($query) - $pos),
                 ' into args [', join(', ', @args), ']'
             ) if DEBUG;
 
-            # call look_down() against each element to get the new elements
-            @elements = map { $_->look_down(@args) } @elements;
-            
+            # we're just looking for any descendent
+            if( !$relationship ) {
+              # look_down() will match self in addition to descendents,
+              # so we explicitly disallow matches on self as we iterate
+              # thru the list.  The other cases below already exclude self.
+              # https://rt.cpan.org/Public/Bug/Display.html?id=58918
+              my @accumulator;
+              foreach my $e (@elements) {
+                push(@accumulator, grep { $_ != $e } $e->look_down(@args));
+              }
+              @elements = @accumulator;
+            }
+            # immediate child selector
+            elsif( $relationship eq '>' ) {
+              @elements = map {
+                $_->look_down(
+                  @args,
+                  sub {
+                    my $tag = shift;
+                    my $root = $_;
+
+                    return $tag->depth == $root->depth + 1;
+                  }
+                )
+              } @elements;
+            }
+            # immediate sibling selector
+            elsif( $relationship eq '+' ) {
+              @elements = map {
+                $_->parent->look_down(
+                  @args,
+                  sub {
+                    my $tag = shift;
+                    my $root = $_;
+                    my @prev_sibling = $tag->left;
+                    # get prev next non-text sibling
+                    foreach my $sibling (reverse @prev_sibling) {
+                      next unless ref $sibling;
+                      return $sibling == $root;
+                    }
+                  }
+                )
+              } @elements;
+            }
+            # grandchild selector
+            elsif( $relationship eq '*' ) {
+              @elements = map {
+                $_->look_down(
+                  @args,
+                  sub {
+                    my $tag = shift;
+                    my $root = $_;
+
+                    return $tag->depth > $root->depth + 1;
+                  }
+                )
+              } @elements;
+            }
+
             # so we can check we've done something
             $comops++;
+
+            warn "numelts=".scalar(@elements)."\n" if DEBUG;
+            map { warn $_->as_HTML } @elements if DEBUG;
         }
 
         if ($comops) {
@@ -206,7 +292,7 @@ sub query {
             ) if DEBUG;
 
             push(@result, @elements);
-            
+
             # update op counter for complete query to include ops performed
             # in this fragment
             $ops += $comops;
@@ -216,19 +302,19 @@ sub query {
             # so we'll ignore it
         }
 
-        last COMMA 
+        last COMMA
             unless $query =~ / \G \s*,\s* /cgsx;
     }
-    
+
     # check for any trailing text in the query that we couldn't parse
     return $self->error_msg( bad_spec => $1, $query )
         if $query =~ / \G (.+?) \s* $ /cgsx;
 
-    # check that we performed at least one query operation 
+    # check that we performed at least one query operation
     return $self->error_msg( bad_query => $query )
         unless $ops;
- 
-    return wantarray 
+
+    return wantarray
         ? @result
         : $self->new(@result);
 }
@@ -269,10 +355,10 @@ sub AUTOLOAD {
 
     # we allow Perl to catch any unknown methods that the user might
     # try to call against the HTML::Element objects in the query
-    my @results = 
+    my @results =
         map  { $_->$method(@_) }
         @$self;
-    
+
     return wantarray
         ?  @results
         : \@results;
@@ -291,13 +377,13 @@ Creating an C<HTML::Query> object using the L<Query()|Query> constructor
 subroutine:
 
     use HTML::Query 'Query';
-    
-    # using named parameters 
+
+    # using named parameters
     $q = Query( text  => $text  );          # HTML text
     $q = Query( file  => $file  );          # HTML file
     $q = Query( tree  => $tree  );          # HTML::Element object
     $q = Query( query => $query );          # HTML::Query object
-    $q = Query(                             
+    $q = Query(
         text  => $text1,                    # or any combination
         text  => $text2,                    # of the above
         file  => $file1,
@@ -306,20 +392,20 @@ subroutine:
         query => $query,
     );
 
-    # passing elements as positional arguments 
+    # passing elements as positional arguments
     $q = Query( $tree );                    # HTML::Element object(s)
-    $q = Query( $tree1, $tree2, $tree3, ... );  
-    
+    $q = Query( $tree1, $tree2, $tree3, ... );
+
     # or from one or more existing queries
     $q = Query( $query1 );                  # HTML::Query object(s)
     $q = Query( $query1, $query2, $query3, ... );
-    
+
     # or a mixture
     $q = Query( $tree1, $query1, $tree2, $query2 );
 
     # the final argument (in all cases) can be a selector
     my $spec = 'ul.menu li a';              # <ul class="menu">..<li>..<a>
-    
+
     $q = Query( $tree, $spec );
     $q = Query( $query, $spec );
     $q = Query( $tree1, $tree2, $query1, $query2, $spec );
@@ -327,18 +413,18 @@ subroutine:
     $q = Query( file  => $file,  $spec );
     $q = Query( tree  => $tree,  $spec );
     $q = Query( query => $query, $spec );
-    $q = Query( 
+    $q = Query(
         text => $text,
         file => $file,
         # ...etc...
-        $spec 
+        $spec
     );
 
 Or using the OO L<new()> constructor method (which the L<Query()|Query>
 subroutine maps onto):
 
     use HTML::Query;
-    
+
     $q = HTML::Query->new(
         # accepts the same arguments as Query()
     )
@@ -347,13 +433,13 @@ Or by monkey-patching a L<query()> method into L<HTML::Element|HTML::Element>.
 
     use HTML::Query 'query';                # note lower case 'q'
     use HTML::TreeBuilder;
-    
+
     # build a tree
     my $tree = HTML::TreeBuilder->new;
     $tree->parse_file($filename);
-    
+
     # call the query() method on any element
-    my $query = $tree->query($spec);   
+    my $query = $tree->query($spec);
 
 Once you have a query, you can start selecting elements:
 
@@ -364,13 +450,13 @@ Once you have a query, you can start selecting elements:
     @r = $q->query('.menu');        # all elements with "menu" class
     @r = $q->query('a[href]');      # all <a> with 'href' attr
     @r = $q->query('a[href=foo]');  # all <a> with 'href="foo"' attr
-    
+
     # you can specify elements within elements...
     @r = $q->query('ul.menu li a'); # <ul class="menu">...<li>...<a>
-    
+
     # and use commas to delimit multiple path specs for different elements
     @r = $q->query('table tr td a, ul.menu li a, form input[type=submit]');
-    
+
     # query() in scalar context returns a new query
     $r = $q->query('table');        # find all tables
     $s = $r->query('tr');           # find all rows in all those tables
@@ -380,11 +466,11 @@ Inspecting query elements:
 
     # get number of elements in query
     my $size  = $q->size
-    
+
     # get first/last element in query
     my $first = $q->first;
     my $last  = $q->last;
-    
+
     # convert query to list or list ref of HTML::Element objects
     my $list = $q->list;            # list ref in scalar context
     my @list = $q->list;            # list in list context
@@ -417,7 +503,7 @@ subroutine.
 
     use HTML::Query 'Query';        # note capital 'Q'
 
-It accepts a C<text> or C<file> named parameter and will create an 
+It accepts a C<text> or C<file> named parameter and will create an
 C<HTML::Query> object from the HTML source text or file, respectively.
 
     my $query = Query( text => $text );
@@ -450,7 +536,7 @@ positional argument.
 
     my $query = Query( $tree1, $tree2, $tree3 );
 
-You can also create a new query from one or more existing queries, 
+You can also create a new query from one or more existing queries,
 
     my $query = Query( query => $query );   # named parameter
     my $query = Query( $query1, $query2 );  # positional arguments.
@@ -458,9 +544,9 @@ You can also create a new query from one or more existing queries,
 You can mix and match these different parameters and positional arguments
 to create a query across several different sources.
 
-    $q = Query(                             
-        text  => $text1,    
-        text  => $text2,    
+    $q = Query(
+        text  => $text1,
+        text  => $text2,
         file  => $file1,
         file  => $file2,
         tree  => $tree,
@@ -474,8 +560,8 @@ subroutine (in fact, the L<Query()|Query> subroutine simply forwards all
 arguments to the L<new()> method).
 
     use HTML::Query;
-    
-    my $query = HTML::Query->new( 
+
+    my $query = HTML::Query->new(
         # same argument format as for Query()
     );
 
@@ -485,10 +571,10 @@ case) can be specified to make this so.
 
     use HTML::Query 'query';                # note lower case 'q'
     use HTML::TreeBuilder;
-    
+
     my $tree = HTML::TreeBuilder->new;
     $tree->parse_file($filename);
-    
+
     # now all HTML::Elements have a query() method
     my @items = $tree->query('ul li');      # find all list items
 
@@ -529,8 +615,8 @@ You can provide multiple selection criteria to find elements within elements
 within elements, and so on.  For example, to find all links in a menu,
 you can write:
 
-    # matches: <ul class="menu"> <li> <a> 
-    @links = $query->query('ul.menu li a');      
+    # matches: <ul class="menu"> <li> <a>
+    @links = $query->query('ul.menu li a');
 
 You can separate different criteria using commas.  For example, to fetch all
 table rows and C<span> elements with a C<foo> class:
@@ -554,11 +640,11 @@ stored in the query.
 =head2 Inspection Methods
 
 The L<size()> method returns the number of elements in the query. The
-L<first()> and L<last()> methods return the first and last items in the 
+L<first()> and L<last()> methods return the first and last items in the
 query, respectively.
 
     if ($query->size) {
-        print "from ", $query->first->as_trimmed_text, 
+        print "from ", $query->first->as_trimmed_text,
                " to ", $query->last->as_trimmed_text;
     }
 
@@ -578,8 +664,8 @@ L<HTML::Element|HTML::Element> objects in the query, you can write:
 
     print $query->as_trimmed_text;
 
-In list context, this method returns a list of the return values from 
-calling the method on each element.  In scalar context it returns a 
+In list context, this method returns a list of the return values from
+calling the method on each element.  In scalar context it returns a
 reference to a list of return values.
 
     @text_blocks = $query->as_trimmed_text;
@@ -620,6 +706,30 @@ This can be combined with an element type and/or element id:
     @elems = $query->query('p#foo.info'); # <p id="foo" class="info">
     @elems = $query->query('#foo.info');  # <ANY id="foo" class="info">
 
+The selectors listed above can be combined in a whitespace delimited
+sequence to select down through a hierarchy of elements.  Consider the
+following table:
+
+    <table class="search">
+      <tr class="result">
+        <td class="value">WE WANT THIS ELEMENT</td>
+      </tr>
+      <tr class="result">
+        <td class="value">AND THIS ONE</td>
+      </tr>
+      ...etc..
+    </table>
+
+To locate the cells that we're interested in, we can write:
+
+    @elems = $query->query('table.search tr.result td.value');
+
+=head2 Attribute Selectors
+
+W3C CSS 2 specification defines new constructs through which to select
+based on specific attributes within elements. See the following link for the spec:
+L<http://www.w3.org/TR/css3-selectors/#attribute-selectors>
+
 =head3 [attr]
 
 Matches elements that have the specified attribute, including any where
@@ -639,7 +749,7 @@ match I<all> of them will be selected.
 
 =head3 [attr=value]
 
-Matches elements that have an attribute set to a specific value.  The 
+Matches elements that have an attribute set to a specific value.  The
 value can be quoted in either single or double quotes, or left unquoted.
 
     @elems = $query->query('[href=index.html]');
@@ -651,42 +761,77 @@ match I<all> of them will be selected.
 
     @elems = $query->query('a[href=index.html][rel=home]');
 
+=head3 [attr|=value]
+
+Matches any element X whose foo attribute has a hyphen-separated list of
+values beginning (from the left) with bar. The value can be quoted in either
+single or double quotes, or left unquoted.
+
+    @elems = $query->query('[lang|=en]');
+    @elems = $query->query('p[class|="example"]');
+    @elems = $query->query("img[alt|='fig']");
+
+You can specify multiple attribute selectors.  Only those elements that
+match I<all> of them will be selected.
+
+    @elems = $query->query('p[class|="external"][lang|="en"]');
+
+=head3 [attr~=value]
+
+Matches any element X whose foo attribute value is a list of space-separated
+values, one of which is exactly equal to bar. The value can be quoted in either
+single or double quotes, or left unquoted.
+
+    @elems = $query->query('[lang~=en]');
+    @elems = $query->query('p[class~="example"]');
+    @elems = $query->query("img[alt~='fig']");
+
+You can specify multiple attribute selectors.  Only those elements that
+match I<all> of them will be selected.
+
+    @elems = $query->query('p[class~="external"][lang~="en"]');
+
 KNOWN BUG: you can't have a C<]> character in the attribute value because
 it confuses the query parser.  Fixing this is TODO.
 
-=head2 Hierarchical Selectors
+=head2 Combinator Selectors
 
-The basic selectors listed above can be combined in a whitespace delimited 
-sequence to select down through a hierarchy of elements.  Consider the
-following table:
+W3C CSS 2 specification defines new constructs through which to select
+based on heirarchy with the DOM. See the following link for the spec:
+L<http://www.w3.org/TR/css3-selectors/#combinators>
 
-    <table class="search">
-      <tr class="result">
-        <td class="value">WE WANT THIS ELEMENT</td>
-      </tr>
-      <tr class="result">
-        <td class="value">AND THIS ONE</td>
-      </tr>
-      ...etc..
-    </table>
+=head3 Immediate Descendents (children)
 
-To locate the cells that we're interested in, we can write:
+When you combine selectors with whitespace elements are selected if
+they are descended from the parent in some way. But if you just want
+to select the children (and not the grandchildren, great-grandchildren,
+etc) then you can combine the selectors with the C<< > >> character.
 
-    @elems = $query->query('table.search tr.result td.value');
+ @elems = $query->query('a > img');
 
-Each element specification can be arbitrarily complex.
+=head3 Non-Immediate Descendents
 
-    @elems = $query->query(
-        'table.search[width=100%][height=100%]
-         tr.result[valign=top]
-         td.value'
-    );
+If you just want any descendents that aren't children then you can combine
+selectors with the C<*> character.
+
+ @elems = $query->query('div * a');
+
+=head3 Immediate Siblings
+
+If you want to use a sibling relationship then you can can join selectors
+with the C<+> character.
+
+ @elems = $query->query('img + span');
+
+=head2 Combining Selectors
+
+You can combine basic and hierarchical selectors into a single query
 
 =head2 Combining Selectors
 
 You can combine basic and hierarchical selectors into a single query
 by separating each part with a comma.  The query will select all matching
-elements for each of the comma-delimited selectors.  For example, to 
+elements for each of the comma-delimited selectors.  For example, to
 find all C<a>, C<b> and C<i> elements in a tree:
 
     @elems = $query->query('a, b, i');
@@ -694,8 +839,8 @@ find all C<a>, C<b> and C<i> elements in a tree:
 Each of these selectors can be arbitrarily complex.
 
     @elems = $query->query(
-        'table.search[width=100%] tr.result[valign=top] td.value, 
-         form.search input[type=submit], 
+        'table.search[width=100%] tr.result[valign=top] td.value,
+         form.search input[type=submit],
          a[href=index.html]'
     );
 
@@ -708,13 +853,13 @@ exported as a convenient way to create C<HTML::Query> objects. It simply
 forwards all arguments to the L<new()> constructor method.
 
     use HTML::Query 'Query';
-    
+
     my $query = Query( file => $file, 'ul.menu li a' );
 
 =head2 query
 
 The C<query()> export hook can be called to monkey-patch a L<query()> method
-into the L<HTML::Element|HTML::Element> module. 
+into the L<HTML::Element|HTML::Element> module.
 
 This is considered questionable behaviour in polite society which regards it
 as a violation of the inner sanctity of the L<HTML::Element|HTML::Element>.
@@ -725,13 +870,13 @@ Just don't blame me if it all blows up later.
 
     use HTML::Query 'query';                # note lower case 'q'
     use HTML::TreeBuilder;
-    
+
     # build a tree
     my $tree = HTML::TreeBuilder->new;
     $tree->parse_file($filename);
-    
+
     # call the query() method on any element
-    my $query = $tree->query('ul li a');   
+    my $query = $tree->query('ul li a');
 
 =head1 METHODS
 
@@ -746,16 +891,16 @@ L<HTML::Element|HTML::Element> or C<HTML::Query> objects.
 
     # single HTML::Element object
     my $query = HTML::Query->new($elem);
-    
+
     # multiple element object
     my $query = HTML::Query->new($elem1, $elem2, $elem3, ...);
-    
+
     # copy elements from an existing query
     my $query = HTML::Query->new($another_query);
-    
+
     # copy elements from several queries
     my $query = HTML::Query->new($query1, $query2, $query3);
-    
+
     # or a mixture
     my $query = HTML::Query->new($elem1, $query1, $elem2, $query3);
 
@@ -775,12 +920,12 @@ using named parameters:
     $query = HTML::Query->new( tree  => $tree );
     $query = HTML::Query->new( query => $query );
 
-You can freely mix and match elements, queries and named sources.  The 
+You can freely mix and match elements, queries and named sources.  The
 query will be constructed as an aggregate across them all.
 
-    $q = HTML::Query->new(                             
-        text  => $text1,    
-        text  => $text2,    
+    $q = HTML::Query->new(
+        text  => $text1,
+        text  => $text2,
         file  => $file1,
         file  => $file2,
         tree  => $tree,
@@ -792,13 +937,13 @@ immediately passed to the L<query()> method which will return a new query
 with only those elements selected.
 
     my $spec = 'ul.menu li a';              # <ul class="menu">..<li>..<a>
-    
+
     my $query = HTML::Query->new( $tree, $spec );
     my $query = HTML::Query->new( text => $text, $spec );
-    my $query = HTML::Query->new( 
+    my $query = HTML::Query->new(
         text => $text,
         file => $file,
-        $spec 
+        $spec
     );
 
 The list of arguments can also be passed by reference to a list.
@@ -871,6 +1016,15 @@ limitation in the parser which will be fixed RSN.
 
 Andy Wardley L<http://wardley.org>
 
+=head1 MAINTAINER
+
+Kevin Kamel <kamelkev@mailermailer.com>
+
+=head1 CONTRIBUTORS
+
+Vivek Khera <vivek@khera.org>
+Michael Peters <wonko@cpan.org>
+
 =head1 COPYRIGHT
 
 Copyright (C) 2008 Andy Wardley.  All Rights Reserved.
@@ -892,4 +1046,3 @@ L<HTML::TreeBuilder|HTML::TreeBuilder>, L<pQuery|pQuery>, L<http://jQuery.com/>
 # End:
 #
 # vim: expandtab shiftwidth=4:
-
