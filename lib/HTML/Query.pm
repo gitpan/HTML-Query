@@ -1,14 +1,14 @@
 package HTML::Query;
 
-our $VERSION = '0.03';
+our $VERSION = '0.04';
 
 use Badger::Class
     version   => $VERSION,
-    debug     => 0,
+    debug     =>  0,
     base      => 'Badger::Base',
     utils     => 'blessed',
     import    => 'class CLASS',
-    vars      => 'AUTOLOAD',
+    vars      => '$error AUTOLOAD',
     constants => 'ARRAY',
     constant  => {
         ELEMENT => 'HTML::Element',
@@ -51,6 +51,8 @@ our $SOURCES = {
     },
 };
 
+#our $error; # how can we store this in the class itself? this is stupid...
+
 
 sub _export_query_to_element {
     class(ELEMENT)->load->method(
@@ -59,6 +61,19 @@ sub _export_query_to_element {
     );
 }
 
+sub _report_error {
+    my ($self, $message) = @_;
+
+    if (suppress_errors()) {
+      if (defined($message)) { 
+        $error = $message;
+      }
+      return undef;
+    }
+    else {
+      $self->error($message);
+    }
+}
 
 sub Query (@) {
     CLASS->new(@_);
@@ -127,6 +142,23 @@ sub new {
         : $self;
 }
 
+sub suppress_errors {
+    my ($self, $setting) = @_;
+
+    our $suppress;
+
+    if (defined($setting)) {
+      $suppress = $setting;
+    }
+
+    return $suppress;
+}
+
+sub get_error {
+    my ($self) = @_;
+
+    return $error;
+}
 
 sub query {
     my ($self, $query) = @_;
@@ -134,9 +166,10 @@ sub query {
     my $ops = 0;
     my $pos = 0;
 
+    $error = undef;
+
     return $self->error_msg('no_query')
-        unless defined $query
-            && length  $query;
+        unless defined $query && length $query;
 
     # multiple specs can be comma separated, e.g. "table tr td, li a, div.foo"
     COMMA: while (1) {
@@ -150,65 +183,119 @@ sub query {
         # e.g. "table tr td"
         SEQUENCE: while (1) {
             my @args;
+            my %seen;
+            my @unique;
             $pos = pos($query) || 0;
             my $relationship = '';
+            my $leading_whitespace;
+            my $universal = '';
+
+            warn "Starting new SEQUENCE" if DEBUG;
 
             # ignore any leading whitespace
-            $query =~ / \G \s+ /cgsx;
+            if ($query =~ / \G (\s+) /cgsx) {
+              $leading_whitespace = defined($1) ? 1 : 0;
+            }
 
-            # get any relationship modifiers
-            if( $query =~ / \G (>|\*|\+)\s*/cgx ) {
+            # grandchild selector is whitespace sensitive, requires leading whitespace
+            if ($leading_whitespace && $comops && ($query =~ / \G (\*) \s+ /cgx)) {
               # can't have a relationship modifier as the first part of the query
               $relationship = $1;
               warn "relationship = $relationship\n" if DEBUG;
-
-              return $self->error_msg( bad_spec => $relationship, $query ) if !$comops;
             }
 
-            # optional leading word is a tag name
-            if ($query =~ / \G (\w+) /cgx) {
-                push( @args, _tag => $1 );
+            # get other relationship modifiers
+            if ($query =~ / \G (>|\+) \s* /cgx) {
+              # can't have a relationship modifier as the first part of the query
+              $relationship = $1;
+              warn "relationship = $relationship\n" if DEBUG;
+              if (!$comops) {
+                return $self->_report_error( $self->message( bad_spec => $relationship, $query ) );
+              }
             }
 
-            # that can be followed by (or the query can start with) a #id
-            if ($query =~ / \G \# ([\w\-]+) /cgx) {
-                push( @args, id => $1 );
-            }
+                # optional leading word is a tag name - handle malformed universal/grandchild selector here
+                # make sure not to match standalone universal selector - that comes later!
+                # TODO double check this regex, I don't understand it, it's from Dave
+                if ($query =~ / \G(?!\*(?:\s+|$|\[))([\w*]+) /cgx) {
+                    my $tag = $1;
 
-            # and/or a .class
-            if ($query =~ / \G \. ([\w\-]+) /cgx) {
-                push( @args, class => qr/ (^|\s+) $1 ($|\s+) /x );
-            }
+                    if ($tag =~ m/\*/) {
+                        return $self->_report_error( $self->message( bad_spec => $tag, $query ) );
+                    }
 
-            # and/or none or more [ ] attribute specs
-            while ($query =~ / \G \[ (.*?) \] /cgx) {
-                my $attribute = $1;
-
-                #if we have an operator
-                if ($attribute =~ m/(.*?)\s*([\|\~]?=)\s*(.*)/) {
-                  my ($name,$attribute_op,$value) = ($1,$2,$3);
-                  warn "operator $attribute_op" if DEBUG;
-
-                  if (defined $value) {
-                    for ($value) {
-                        s/^['"]//;
-                        s/['"]$//;
-                    }
-                    if ($attribute_op eq '=') {
-                      push( @args, $name => $value);
-                    }
-                    elsif ($attribute_op eq '|=') {
-                      push(@args, $name => qr/\b${value}-?/)
-                    }
-                    elsif ($attribute_op eq '~=') {
-                      push(@args, $name => qr/\b${value}\b/)
-                    }
-                  }
+                    push( @args, _tag => $tag );
                 }
-                else {
-                  # add a regex to match anything (or nothing)
-                  push( @args, $attribute => qr/.*/ );
+
+                # universal selector, requires leading whitespace or to be first operator
+                if (($leading_whitespace || $comops == 0) && ($query =~ / \G (\*) /cgx)) {
+
+                    #select all tags from this point down
+                    push(@args, _tag => qr/\w+/);
                 }
+
+            # loop to collect a description about this specific part of the rule
+            while (1) {
+                my $work = scalar @args;
+
+                # that can be followed by (or the query can start with) a #id
+                if ($query =~ / \G \# ([\w\-]+) /cgx) {
+                    push( @args, id => $1 );
+                }
+
+                # and/or a .class
+                if ($query =~ / \G \. ([\w\-]+) /cgx) {
+                   push( @args, class => qr/ (^|\s+) $1 ($|\s+) /x );
+                }
+
+                # and/or none or more [ ] attribute specs
+                if ($query =~ / \G \[ (.*?) \] /cgx) {
+                    my $attribute = $1;
+
+                    #if we have an operator
+                    if ($attribute =~ m/(.*?)\s*([\|\~]?=)\s*(.*)/) {
+                        my ($name,$attribute_op,$value) = ($1,$2,$3);
+
+                        unless (defined($name) && length($name)) {
+                             return $self->_report_error( $self->message( bad_spec => $name, $query ) );
+                        }
+
+                        warn "operator $attribute_op" if DEBUG;
+
+                        if (defined $value) {
+                            for ($value) {
+                                s/^['"]//;
+                                s/['"]$//;
+                            }
+                            if ($attribute_op eq '=') {
+                                push( @args, $name => $value);
+                            }
+                            elsif ($attribute_op eq '|=') {
+                                push(@args, $name => qr/\b${value}-?/)
+                            }
+                            elsif ($attribute_op eq '~=') {
+                                push(@args, $name => qr/\b${value}\b/)
+                            }
+                            else {
+                                return $self->_report_error( $self->message( bad_spec => $attribute_op, $query ) );
+                            }
+                        }
+                        else {
+                            return $self->_report_error( $self->message( bad_spec => $attribute_op, $query ) );
+                        }
+                    }
+                    else {
+                        unless (defined($attribute) && length($attribute)) {
+                          return $self->_report_error( $self->message( bad_spec => $attribute, $query ) );
+                        }
+
+                        # add a regex to match anything (or nothing)
+                        push( @args, $attribute => qr/.*/ );
+                    }
+                }
+
+                # keep going until this particular expression is fully processed
+                last unless scalar(@args) > $work;
             }
 
             # we must have something in @args by now or we didn't find any
@@ -230,6 +317,7 @@ sub query {
               foreach my $e (@elements) {
                 push(@accumulator, grep { $_ != $e } $e->look_down(@args));
               }
+
               @elements = @accumulator;
             }
             # immediate child selector
@@ -282,7 +370,15 @@ sub query {
             # so we can check we've done something
             $comops++;
 
-            warn "numelts=".scalar(@elements)."\n" if DEBUG;
+            # we need to remove duplicate elements in the case where elements are nested between multiple matching elements
+            %seen = ();
+            @unique = ();
+            foreach my $item (@elements) {
+              push(@unique, $item) unless $seen{$item}++;
+            }
+
+            @elements = @unique;
+
             map { warn $_->as_HTML } @elements if DEBUG;
         }
 
@@ -302,17 +398,18 @@ sub query {
             # so we'll ignore it
         }
 
-        last COMMA
-            unless $query =~ / \G \s*,\s* /cgsx;
+        last COMMA unless $query =~ / \G \s*,\s* /cgsx;
     }
 
     # check for any trailing text in the query that we couldn't parse
-    return $self->error_msg( bad_spec => $1, $query )
-        if $query =~ / \G (.+?) \s* $ /cgsx;
+    if ($query =~ / \G (.+?) \s* $ /cgsx) {
+        return $self->_report_error( $self->message( bad_spec => $1, $query ) );
+    }
 
     # check that we performed at least one query operation
-    return $self->error_msg( bad_query => $query )
-        unless $ops;
+    unless ($ops) {
+        return $self->_report_error( $self->message( bad_query => $query ) );
+    }
 
     return wantarray
         ? @result
@@ -794,6 +891,15 @@ match I<all> of them will be selected.
 KNOWN BUG: you can't have a C<]> character in the attribute value because
 it confuses the query parser.  Fixing this is TODO.
 
+=head2 Universal Selector
+
+W3C CSS 2 specification defines a new construct through which to select
+any element within the document below a given hierarchy.
+
+http://www.w3.org/TR/css3-selectors/#universal-selector
+
+  @elems = $query->query('*');
+
 =head2 Combinator Selectors
 
 W3C CSS 2 specification defines new constructs through which to select
@@ -977,8 +1083,7 @@ have an undefined value returned then you can use the C<try> method inherited
 from L<Badger::Base|Badger::Base>. This effectively wraps the call to
 C<first()> in an C<eval> block to catch any exceptions thrown.
 
-    my $elem = $query->try('first')
-        || warn "no first element\n";
+    my $elem = $query->try('first') || warn "no first element\n";
 
 =head2 last()
 
@@ -1024,10 +1129,11 @@ Kevin Kamel <kamelkev@mailermailer.com>
 
 Vivek Khera <vivek@khera.org>
 Michael Peters <wonko@cpan.org>
+David Gray <cpan@doesntsuck.com>
 
 =head1 COPYRIGHT
 
-Copyright (C) 2008 Andy Wardley.  All Rights Reserved.
+Copyright (C) 2010 Andy Wardley.  All Rights Reserved.
 
 This module is free software; you can redistribute it and/or modify it
 under the same terms as Perl itself.

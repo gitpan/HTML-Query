@@ -14,7 +14,7 @@ use lib qw( ./lib ../lib );
 use HTML::TreeBuilder;
 use Badger::Filesystem '$Bin Dir';
 use Badger::Test
-    tests => 73,
+    tests => 75,
     debug => 'HTML::Query',
     args  => \@ARGV;
 
@@ -41,6 +41,10 @@ ok( $query, 'created query' );
 #-----------------------------------------------------------------------
 # look for some basic elements using duplicate tagnames in query
 #-----------------------------------------------------------------------
+
+my $test0 = $query->query('*');
+ok( $test0, '*' );
+is( $test0->size, 46, '*' ); #includes javascript and metas
 
 my $test1 = $query->query('div#id-one');
 ok( $test1, 'div#id-one' );
@@ -83,8 +87,8 @@ is( join(', ', $test8->as_trimmed_text), '(p class="class-one") (span)(/span) te
 
 my $test9 = $query->query('div#id-one p.class-two *');
 ok( $test9, 'div#id-one p.class-two *' );
-is( $test9->size, 2, 'div#id-one p.class-two *' );
-is( join(', ', $test9->as_trimmed_text), '(p class="class-two")(/p), (p class="class-two")(/p)','got var' );
+is( $test9->size, 0, 'div#id-one p.class-two *' );
+is( join(', ', $test9->as_trimmed_text), '','got var' );
 
 my $test10 = $query->query('p.class-two em');
 ok( $test10, 'p.class-two em' );
@@ -98,8 +102,8 @@ is( join(', ', $test11->as_trimmed_text), '(span)(/span), (span)(/span)','got va
 
 my $test12 = $query->query('div em');
 ok( $test12, 'div em' );
-is( $test12->size, 8, 'div em' );
-is( join(', ', $test12->as_trimmed_text), '(em) (span class="sub-class")(/span) (span class="sub-class2")(/span) (span class="under_class2")(/span) (span class="sub-class2 under_class3")(/span) (/em), (em) (span class="sub-class")(/span) (span class="sub-class2")(strong)(/strong)(strong class="class-four")(/strong)(/span) (span class="under_class2")(/span) (/em), (em)(/em), (em)(/em), (em) (span class="sub-class")(/span) (span class="sub-class2")(/span) (span class="under_class2")(/span) (span class="sub-class2 under_class3")(/span) (/em), (em) (span class="sub-class")(/span) (span class="sub-class2")(strong)(/strong)(strong class="class-four")(/strong)(/span) (span class="under_class2")(/span) (/em), (em)(/em), (em)(/em)','got var' );
+is( $test12->size, 4, 'div em' );
+is( join(', ', $test12->as_trimmed_text), '(em) (span class="sub-class")(/span) (span class="sub-class2")(/span) (span class="under_class2")(/span) (span class="sub-class2 under_class3")(/span) (/em), (em) (span class="sub-class")(/span) (span class="sub-class2")(strong)(/strong)(strong class="class-four")(/strong)(/span) (span class="under_class2")(/span) (/em), (em)(/em), (em)(/em)','got var' );
 
 my $test13 = $query->query('div>em');
 ok( $test13, 'div>em' );
