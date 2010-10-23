@@ -1,6 +1,6 @@
 --- #YAML:1.0
 name:               HTML-Query
-version:            0.04
+version:            0.05
 abstract:           perform jQuery-like queries on HTML::Element trees
 author:
     - Kevin Kamel <kamelkev@mailermailer.com>

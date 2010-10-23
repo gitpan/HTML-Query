@@ -1,6 +1,6 @@
 package HTML::Query;
 
-our $VERSION = '0.04';
+our $VERSION = '0.05';
 
 use Badger::Class
     version   => $VERSION,
@@ -8,7 +8,7 @@ use Badger::Class
     base      => 'Badger::Base',
     utils     => 'blessed',
     import    => 'class CLASS',
-    vars      => '$error AUTOLOAD',
+    vars      => 'AUTOLOAD',
     constants => 'ARRAY',
     constant  => {
         ELEMENT => 'HTML::Element',
@@ -51,9 +51,6 @@ our $SOURCES = {
     },
 };
 
-#our $error; # how can we store this in the class itself? this is stupid...
-
-
 sub _export_query_to_element {
     class(ELEMENT)->load->method(
         # this Just Works[tm] because first arg is HTML::Element object
@@ -64,14 +61,14 @@ sub _export_query_to_element {
 sub _report_error {
     my ($self, $message) = @_;
 
-    if (suppress_errors()) {
+    if ($self->suppress_errors()) {
       if (defined($message)) { 
-        $error = $message;
+        $self->{error} = $message;
       }
       return undef;
     }
     else {
-      $self->error($message);
+      $self->error($message);   # this will DIE
     }
 }
 
@@ -89,6 +86,13 @@ sub new {
         if @_ == 1 && ref $_[0] eq ARRAY;
 
     $class = ref $class || $class;
+
+    my $self = {
+                error => undef,
+                suppress_errors => undef,
+                match_self => undef,
+                elements => \@elements
+               };
 
     # each element should be an HTML::Element object, although we might
     # want to subclass this module to recognise a different kind of object,
@@ -127,7 +131,7 @@ sub new {
                 next;
             }
             elsif ($element->isa($class)) {
-                push(@elements, @$element);
+                push(@elements, @{$element->get_elements});
                 next;
             }
         }
@@ -135,7 +139,7 @@ sub new {
         return $class->error_msg( bad_element => $element );
     }
 
-    my $self = bless \@elements, $class;
+    bless $self, $class;
 
     return defined $select
         ? $self->query($select)
@@ -145,19 +149,18 @@ sub new {
 sub suppress_errors {
     my ($self, $setting) = @_;
 
-    our $suppress;
-
     if (defined($setting)) {
-      $suppress = $setting;
+      $self->{suppress_errors} = $setting;
     }
 
-    return $suppress;
+
+    return $self->{suppress_errors};
 }
 
 sub get_error {
     my ($self) = @_;
 
-    return $error;
+    return $self->{error};
 }
 
 sub query {
@@ -166,7 +169,7 @@ sub query {
     my $ops = 0;
     my $pos = 0;
 
-    $error = undef;
+    $self->{error} = undef;
 
     return $self->error_msg('no_query')
         unless defined $query && length $query;
@@ -174,17 +177,17 @@ sub query {
     # multiple specs can be comma separated, e.g. "table tr td, li a, div.foo"
     COMMA: while (1) {
         # each comma-separated traversal spec is applied downward from
-        # the source elements in the @$self query
-        my @elements = @$self;
+        # the source elements in the $self->{elements} query
+        my @elements = @{$self->get_elements};
         my $comops   = 0;
+
+        warn "Starting new COMMA" if DEBUG;
 
         # for each whitespace delimited descendant spec we grok the correct
         # parameters for look_down() and apply them to each source element
         # e.g. "table tr td"
         SEQUENCE: while (1) {
             my @args;
-            my %seen;
-            my @unique;
             $pos = pos($query) || 0;
             my $relationship = '';
             my $leading_whitespace;
@@ -195,6 +198,7 @@ sub query {
             # ignore any leading whitespace
             if ($query =~ / \G (\s+) /cgsx) {
               $leading_whitespace = defined($1) ? 1 : 0;
+              warn "removing leading whitespace\n" if DEBUG;
             }
 
             # grandchild selector is whitespace sensitive, requires leading whitespace
@@ -214,25 +218,24 @@ sub query {
               }
             }
 
-                # optional leading word is a tag name - handle malformed universal/grandchild selector here
-                # make sure not to match standalone universal selector - that comes later!
-                # TODO double check this regex, I don't understand it, it's from Dave
-                if ($query =~ / \G(?!\*(?:\s+|$|\[))([\w*]+) /cgx) {
-                    my $tag = $1;
+            # optional leading word is a tag name
+            if ($query =~ / \G ([\w\*]+) /cgx) {
+              my $tag = $1;
 
-                    if ($tag =~ m/\*/) {
-                        return $self->_report_error( $self->message( bad_spec => $tag, $query ) );
-                    }
-
-                    push( @args, _tag => $tag );
+              if ($tag =~ m/\*/) {
+                if (($leading_whitespace || $comops == 0) && ($tag eq '*')) {
+                  warn "universal tag\n" if DEBUG;
+                  push(@args, _tag => qr/\w+/);
                 }
-
-                # universal selector, requires leading whitespace or to be first operator
-                if (($leading_whitespace || $comops == 0) && ($query =~ / \G (\*) /cgx)) {
-
-                    #select all tags from this point down
-                    push(@args, _tag => qr/\w+/);
+                else {
+                  return $self->_report_error( $self->message( bad_spec => $tag, $query ) );
                 }
+              }
+              else {
+                warn "html tag\n" if DEBUG;
+                push( @args, _tag => $tag );
+              }
+            }
 
             # loop to collect a description about this specific part of the rule
             while (1) {
@@ -309,16 +312,25 @@ sub query {
 
             # we're just looking for any descendent
             if( !$relationship ) {
-              # look_down() will match self in addition to descendents,
-              # so we explicitly disallow matches on self as we iterate
-              # thru the list.  The other cases below already exclude self.
-              # https://rt.cpan.org/Public/Bug/Display.html?id=58918
-              my @accumulator;
-              foreach my $e (@elements) {
-                push(@accumulator, grep { $_ != $e } $e->look_down(@args));
+              if ($self->{match_self}) {
+                # if we are re-querying, be sure to match ourselves not just descendents
+                @elements = map { $_->look_down(@args) } @elements;
+              } else {
+                # look_down() will match self in addition to descendents,
+                # so we explicitly disallow matches on self as we iterate
+                # thru the list.  The other cases below already exclude self.
+                # https://rt.cpan.org/Public/Bug/Display.html?id=58918
+                my @accumulator;
+                foreach my $e (@elements) {
+                  if ($e->root() == $e) {
+                    push(@accumulator, $e->look_down(@args));
+                  }
+                  else {
+                    push(@accumulator, grep { $_ != $e } $e->look_down(@args));
+                  }
+                }
+                @elements = @accumulator;
               }
-
-              @elements = @accumulator;
             }
             # immediate child selector
             elsif( $relationship eq '>' ) {
@@ -370,14 +382,8 @@ sub query {
             # so we can check we've done something
             $comops++;
 
-            # we need to remove duplicate elements in the case where elements are nested between multiple matching elements
-            %seen = ();
-            @unique = ();
-            foreach my $item (@elements) {
-              push(@unique, $item) unless $seen{$item}++;
-            }
-
-            @elements = @unique;
+            # dedup the results we've gotten
+            @elements = $self->dedup(\@elements);
 
             map { warn $_->as_HTML } @elements if DEBUG;
         }
@@ -387,7 +393,14 @@ sub query {
                 'Added', scalar(@elements), ' elements to results'
             ) if DEBUG;
 
-            push(@result, @elements);
+            #add in the recent pass
+            push(@result,@elements);
+
+            # dedup the results across the result sets, necessary for comma based selectors
+            @result = $self->dedup(\@result);
+
+            # sort the result set...
+            @result = sort by_address @result;
 
             # update op counter for complete query to include ops performed
             # in this fragment
@@ -408,12 +421,80 @@ sub query {
 
     # check that we performed at least one query operation
     unless ($ops) {
-        return $self->_report_error( $self->message( bad_query => $query ) );
+        return $self->_report_error( $self->message( bad_query => $query ) ); 
     }
 
-    return wantarray
-        ? @result
-        : $self->new(@result);
+    return wantarray ? @result : $self->new_match_self(@result);
+}
+
+
+sub by_address
+{
+    my @a = split /\./, $a->address();
+    my @b = split /\./, $b->address();
+
+my $max = (scalar @a > scalar @b) ? scalar @a : scalar @b;
+
+    for (my $index=0; $index<$max; $index++) {
+
+# warn $a[$index]. "position $index";
+# warn $b[$index]. "position $index";
+
+
+      if (!defined($a[$index]) && !defined($b[$index])) {
+#warn "neither defined";
+        return 0;
+      }
+      elsif (!defined($a[$index])) {
+# warn "a not defined";
+        return -1;
+      }
+      elsif(!defined($b[$index])) {
+# warn "b not defined";
+        return 1;
+      }
+
+#warn "doing compare!";
+
+      if ($a[$index] == $b[$index]) {
+ #       warn "was equal";
+        next; #move to the next
+      }
+      else {
+  #      warn "here" . $b[$index] <=> $a[$index];
+        return $a[$index] <=> $b[$index];
+      }
+    }
+}
+
+# remove duplicate elements in the case where elements are nested between multiple matching elements
+sub dedup {
+  my ($self,$elements) = @_;
+
+  my %seen = ();
+  my @unique = ();
+
+  foreach my $item (@{$elements}) {
+    if (!exists($seen{$item})) {
+      push(@unique, $item);
+    }
+
+    $seen{$item}++;
+  }
+
+  return @unique;
+}
+
+
+# instantiate an instance with match_self turned on, for use with
+# follow-up queries, so they match the top-most elements.
+sub new_match_self {
+  my $self = shift;
+
+  my $result = $self->new(@_);
+
+  $result->{match_self} = 1;
+  return $result;
 }
 
 
@@ -425,23 +506,30 @@ sub list {
 
 
 sub size {
-    return scalar @{ $_[0] };
+  my $self = shift;
+  return scalar @{$self->get_elements};
 }
 
 
 sub first {
     my $self = shift;
-    return @$self
-        ? $self->[0]
+    return @{$self->get_elements}
+        ? $self->get_elements->[0]
         : $self->error_msg('is_empty');
 }
 
 
 sub last {
     my $self = shift;
-    return @$self
-        ? $self->[-1]
+    return @{$self->get_elements}
+        ? $self->get_elements->[-1]
         : $self->error_msg('is_empty');
+}
+
+# return reference to elements array
+sub get_elements {
+  my $self = shift;
+  return $self->{elements};
 }
 
 
@@ -454,7 +542,7 @@ sub AUTOLOAD {
     # try to call against the HTML::Element objects in the query
     my @results =
         map  { $_->$method(@_) }
-        @$self;
+        @{$self->get_elements};
 
     return wantarray
         ?  @results
