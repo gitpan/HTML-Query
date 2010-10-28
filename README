@@ -72,24 +72,24 @@ SYNOPSIS
 
     Once you have a query, you can start selecting elements:
 
-        @r = $q->query('a');            # all <a>...</a> elements
-        @r = $q->query('a#menu');       # all <a> with "menu" id
-        @r = $q->query('#menu');        # all elements with "menu" id
-        @r = $q->query('a.menu');       # all <a> with "menu" class
-        @r = $q->query('.menu');        # all elements with "menu" class
-        @r = $q->query('a[href]');      # all <a> with 'href' attr
-        @r = $q->query('a[href=foo]');  # all <a> with 'href="foo"' attr
+        @r = $q->query('a')->get_elements();            # all <a>...</a> elements
+        @r = $q->query('a#menu')->get_elements();       # all <a> with "menu" id
+        @r = $q->query('#menu')->get_elements();        # all elements with "menu" id
+        @r = $q->query('a.menu')->get_elements();       # all <a> with "menu" class
+        @r = $q->query('.menu')->get_elements();        # all elements with "menu" class
+        @r = $q->query('a[href]')->get_elements();      # all <a> with 'href' attr
+        @r = $q->query('a[href=foo]')->get_elements();  # all <a> with 'href="foo"' attr
 
         # you can specify elements within elements...
-        @r = $q->query('ul.menu li a'); # <ul class="menu">...<li>...<a>
+        @r = $q->query('ul.menu li a')->get_elements(); # <ul class="menu">...<li>...<a>
 
         # and use commas to delimit multiple path specs for different elements
-        @r = $q->query('table tr td a, ul.menu li a, form input[type=submit]');
+        @r = $q->query('table tr td a, form input[type=submit]')->get_elements();
 
         # query() in scalar context returns a new query
-        $r = $q->query('table');        # find all tables
-        $s = $r->query('tr');           # find all rows in all those tables
-        $t = $s->query('td');           # and all cells in those rows...
+        $r = $q->query('table')->get_elements();;       # find all tables
+        $s = $r->query('tr')->get_elements();           # find all rows in all those tables
+        $t = $s->query('td')->get_elements();           # and all cells in those rows...
 
     Inspecting query elements:
 
@@ -203,7 +203,7 @@ DESCRIPTION
         $tree->parse_file($filename);
 
         # now all HTML::Elements have a query() method
-        my @items = $tree->query('ul li');      # find all list items
+        my @items = $tree->query('ul li')->get_elements();  # find all list items
 
     This approach, often referred to as *monkey-patching*, should be used
     carefully and sparingly. It involves a violation of HTML::Element's
@@ -219,35 +219,35 @@ DESCRIPTION
     query syntax. For example, to fetch all the "<a>" elements in the tree,
     you can write:
 
-        @links = $query->query('a');
+        @links = $query->query('a')->get_elements();
 
     Or, if you want the elements that have a specific "class" attribute
     defined with a value of, say "menu", you can write:
 
-        @links = $query->query('a.menu');
+        @links = $query->query('a.menu')->get_elements();
 
     More generally, you can look for the existence of any attribute and
     optionally provide a specific value for it.
 
-        @links = $query->query('a[href]');               # any href attribute
-        @links = $query->query('a[href=index.html]');    # specific value
+        @links = $query->query('a[href]')->get_elements();            # any href attribute
+        @links = $query->query('a[href=index.html]')->get_elements(); # specific value
 
     You can also find an element (or elements) by specifying an id.
 
-        @links = $query->query('#menu');         # any element with id="menu"
-        @links = $query->query('ul#menu');       # ul element with id="menu"
+        @links = $query->query('#menu')->get_elements();         # any element with id="menu"
+        @links = $query->query('ul#menu')->get_elements();       # ul element with id="menu"
 
     You can provide multiple selection criteria to find elements within
     elements within elements, and so on. For example, to find all links in a
     menu, you can write:
 
         # matches: <ul class="menu"> <li> <a>
-        @links = $query->query('ul.menu li a');
+        @links = $query->query('ul.menu li a')->get_elements();
 
     You can separate different criteria using commas. For example, to fetch
     all table rows and "span" elements with a "foo" class:
 
-        @elems = $query->('table tr, span.foo');
+        @elems = $query->('table tr, span.foo')->get_elements();
 
   Query Results
     When called in list context, as shown in the examples above, the query()
@@ -258,9 +258,9 @@ DESCRIPTION
     query. The query() method applies the selection to all elements stored
     in the query.
 
-        my $tables = $query->query('table');    # find all tables
-        my $rows   = $tables->query('tr');      # find all rows in those tables
-        my $cells  = $rows->query('td');        # find all cells in those rows
+        my $tables = $query->query('table');             # query for tables
+        my $rows   = $tables->query('tr');               # requery for all rows in those tables
+        my $cells  = $rows->query('td')->get_elements(); # return back all the cells in those rows
 
   Inspection Methods
     The size() method returns the number of elements in the query. The
@@ -268,8 +268,7 @@ DESCRIPTION
     respectively.
 
         if ($query->size) {
-            print "from ", $query->first->as_trimmed_text,
-                   " to ", $query->last->as_trimmed_text;
+            print "from ", $query->first->as_trimmed_text, " to ", $query->last->as_trimmed_text;
         }
 
     If you want to extract the HTML::Element objects from the query you can
@@ -300,27 +299,27 @@ QUERY SYNTAX
    element
     Matches all elements of a particular type.
 
-        @elems = $query->query('table');     # <table>
+        @elems = $query->query('table')->get_elements();     # <table>
 
    #id
     Matches all elements with a specific id attribute.
 
-        @elems = $query->query('#menu');     # <ANY id="menu">
+        @elems = $query->query('#menu')->get_elements()     # <ANY id="menu">
 
     This can be combined with an element type:
 
-        @elems = $query->query('ul#menu');   # <ul id="menu">
+        @elems = $query->query('ul#menu')->get_elements();  # <ul id="menu">
 
    .class
     Matches all elements with a specific class attribute.
 
-        @elems = $query->query('.info');     # <ANY class="info">
+        @elems = $query->query('.info')->get_elements();     # <ANY class="info">
 
     This can be combined with an element type and/or element id:
 
-        @elems = $query->query('p.info');     # <p class="info">
-        @elems = $query->query('p#foo.info'); # <p id="foo" class="info">
-        @elems = $query->query('#foo.info');  # <ANY id="foo" class="info">
+        @elems = $query->query('p.info')->get_elements();     # <p class="info">
+        @elems = $query->query('p#foo.info')->get_elements(); # <p id="foo" class="info">
+        @elems = $query->query('#foo.info')->get_elements();  # <ANY id="foo" class="info">
 
     The selectors listed above can be combined in a whitespace delimited
     sequence to select down through a hierarchy of elements. Consider the
@@ -338,7 +337,7 @@ QUERY SYNTAX
 
     To locate the cells that we're interested in, we can write:
 
-        @elems = $query->query('table.search tr.result td.value');
+        @elems = $query->query('table.search tr.result td.value')->get_elements();
 
   Attribute Selectors
     W3C CSS 2 specification defines new constructs through which to select
@@ -349,58 +348,58 @@ QUERY SYNTAX
     Matches elements that have the specified attribute, including any where
     the attribute has no value.
 
-        @elems = $query->query('[href]');     # <ANY href="...">
+        @elems = $query->query('[href]')->get_elements();        # <ANY href="...">
 
     This can be combined with any of the above selectors. For example:
 
-        @elems = $query->query('a[href]');      # <a href="...">
-        @elems = $query->query('a.menu[href]'); # <a class="menu" href="...">
+        @elems = $query->query('a[href]')->get_elements();       # <a href="...">
+        @elems = $query->query('a.menu[href]')->get_elements();  # <a class="menu" href="...">
 
     You can specify multiple attribute selectors. Only those elements that
     match *all* of them will be selected.
 
-        @elems = $query->query('a[href][rel]'); # <a href="..." rel="...">
+        @elems = $query->query('a[href][rel]')->get_elements();  # <a href="..." rel="...">
 
    [attr=value]
     Matches elements that have an attribute set to a specific value. The
     value can be quoted in either single or double quotes, or left unquoted.
 
-        @elems = $query->query('[href=index.html]');
-        @elems = $query->query('[href="index.html"]');
-        @elems = $query->query("[href='index.html']");
+        @elems = $query->query('[href=index.html]')->get_elements();
+        @elems = $query->query('[href="index.html"]')->get_elements();
+        @elems = $query->query("[href='index.html']")->get_elements();
 
     You can specify multiple attribute selectors. Only those elements that
     match *all* of them will be selected.
 
-        @elems = $query->query('a[href=index.html][rel=home]');
+        @elems = $query->query('a[href=index.html][rel=home]')->get_elements();
 
    [attr|=value]
     Matches any element X whose foo attribute has a hyphen-separated list of
     values beginning (from the left) with bar. The value can be quoted in
     either single or double quotes, or left unquoted.
 
-        @elems = $query->query('[lang|=en]');
-        @elems = $query->query('p[class|="example"]');
-        @elems = $query->query("img[alt|='fig']");
+        @elems = $query->query('[lang|=en]')->get_elements();
+        @elems = $query->query('p[class|="example"]')->get_elements();
+        @elems = $query->query("img[alt|='fig']")->get_elements();
 
     You can specify multiple attribute selectors. Only those elements that
     match *all* of them will be selected.
 
-        @elems = $query->query('p[class|="external"][lang|="en"]');
+        @elems = $query->query('p[class|="external"][lang|="en"]')->get_elements();
 
    [attr~=value]
     Matches any element X whose foo attribute value is a list of
     space-separated values, one of which is exactly equal to bar. The value
     can be quoted in either single or double quotes, or left unquoted.
 
-        @elems = $query->query('[lang~=en]');
-        @elems = $query->query('p[class~="example"]');
-        @elems = $query->query("img[alt~='fig']");
+        @elems = $query->query('[lang~=en]')->get_elements();
+        @elems = $query->query('p[class~="example"]')->get_elements();
+        @elems = $query->query("img[alt~='fig']")->get_elements();
 
     You can specify multiple attribute selectors. Only those elements that
     match *all* of them will be selected.
 
-        @elems = $query->query('p[class~="external"][lang~="en"]');
+        @elems = $query->query('p[class~="external"][lang~="en"]')->get_elements();
 
     KNOWN BUG: you can't have a "]" character in the attribute value because
     it confuses the query parser. Fixing this is TODO.
@@ -411,7 +410,7 @@ QUERY SYNTAX
 
     http://www.w3.org/TR/css3-selectors/#universal-selector
 
-      @elems = $query->query('*');
+      @elems = $query->query('*')->get_elements();
 
   Combinator Selectors
     W3C CSS 2 specification defines new constructs through which to select
@@ -424,19 +423,19 @@ QUERY SYNTAX
     select the children (and not the grandchildren, great-grandchildren,
     etc) then you can combine the selectors with the ">" character.
 
-     @elems = $query->query('a > img');
+     @elems = $query->query('a > img')->get_elements();
 
    Non-Immediate Descendents
     If you just want any descendents that aren't children then you can
     combine selectors with the "*" character.
 
-     @elems = $query->query('div * a');
+     @elems = $query->query('div * a')->get_elements();
 
    Immediate Siblings
     If you want to use a sibling relationship then you can can join
     selectors with the "+" character.
 
-     @elems = $query->query('img + span');
+     @elems = $query->query('img + span')->get_elements();
 
   Combining Selectors
     You can combine basic and hierarchical selectors into a single query
@@ -447,7 +446,7 @@ QUERY SYNTAX
     elements for each of the comma-delimited selectors. For example, to find
     all "a", "b" and "i" elements in a tree:
 
-        @elems = $query->query('a, b, i');
+        @elems = $query->query('a, b, i')->get_elements();
 
     Each of these selectors can be arbitrarily complex.
 
@@ -455,7 +454,7 @@ QUERY SYNTAX
             'table.search[width=100%] tr.result[valign=top] td.value,
              form.search input[type=submit],
              a[href=index.html]'
-        );
+        )->get_elements();
 
 EXPORT HOOKS
   Query
@@ -559,14 +558,24 @@ METHODS
 
   query($spec)
     This method locates the descendant elements identified by the $spec
-    argument for each element in the query. In list context it returns a
-    list of matching HTML::Element objects. In scalar context it returns a
-    new "HTML::Query" object containing the element objects.
+    argument for each element in the query. It then interally stores the
+    results for requerying or return. See get_elements().
 
-        my @elements  = $query->query($spec);
-        my $new_query = $query->query($spec);
+        my $query = HTML::Query->new(\@args);
+        my $results = $query->query($spec);
 
     See "QUERY SYNTAX" for the permitted syntax of the $spec argument.
+
+  get_elements()
+    This method returns the stored results from a query. In list context it
+    returns a list of matching HTML::Element objects. In scalar context it
+    returns a reference to the results array.
+
+        my $query = HTML::Query->new(\@args);
+        my $results = $query->query($spec);
+
+        my @elements  = $results->query($spec)->get_elements();
+        my $elements  = $results->query($spec)->get_elements();
 
   size()
     Returns the number of elements in the query.
