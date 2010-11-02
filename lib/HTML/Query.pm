@@ -1,6 +1,6 @@
 package HTML::Query;
 
-our $VERSION = '0.06';
+our $VERSION = '0.07';
 
 use Badger::Class
     version   => $VERSION,
@@ -68,7 +68,8 @@ sub new {
                 error => undef,
                 suppress_errors => undef,
                 match_self => undef,
-                elements => \@elements
+                elements => \@elements,
+                specificity => {}
                };
 
     # each element should be an HTML::Element object, although we might
@@ -138,6 +139,10 @@ sub query {
         # the source elements in the $self->{elements} query
         my @elements = @{$self->get_elements};
         my $comops   = 0;
+
+        my $specificity = 0;
+        my $startpos = pos($query) || 0;
+
         my $hack_sequence = 0; # look for '* html'
 
         warn "Starting new COMMA" if DEBUG;
@@ -195,6 +200,7 @@ sub query {
               }
               else {
                 warn "html tag\n" if DEBUG;
+                $specificity += 1; # standard tags are worth 1 point
                 push( @args, _tag => $tag );
 
                 if ($comops == 1 && $tag eq 'html') {
@@ -209,17 +215,20 @@ sub query {
 
                 # that can be followed by (or the query can start with) a #id
                 if ($query =~ / \G \# ([\w\-]+) /cgx) {
+                    $specificity += 100;
                     push( @args, id => $1 );
                 }
 
                 # and/or a .class
                 if ($query =~ / \G \. ([\w\-]+) /cgx) {
+                   $specificity += 10;
                    push( @args, class => qr/ (^|\s+) $1 ($|\s+) /x );
                 }
 
                 # and/or none or more [ ] attribute specs
                 if ($query =~ / \G \[ (.*?) \] /cgx) {
                     my $attribute = $1;
+                    $specificity += 10;
 
                     #if we have an operator
                     if ($attribute =~ m/(.*?)\s*([\|\~]?=)\s*(.*)/) {
@@ -363,6 +372,9 @@ sub query {
                 'Added', scalar(@elements), ' elements to results'
             ) if DEBUG;
 
+            my $selector = substr ($query,$startpos, $pos - $startpos);
+            $self->_add_specificity($selector,$specificity);
+
             #add in the recent pass
             push(@result,@elements);
 
@@ -402,6 +414,69 @@ sub get_elements {
   my $self = shift;
 
   return wantarray ? @{$self->{elements}} : $self->{elements};
+}
+
+###########################################################################################################
+# from CSS spec at http://www.w3.org/TR/CSS21/cascade.html#specificity
+###########################################################################################################
+# A selector's specificity is calculated as follows:
+#      
+#     * count the number of ID attributes in the selector (= a)
+#     * count the number of other attributes and pseudo-classes in the selector (= b)
+#     * count the number of element names in the selector (= c)
+#     * ignore pseudo-elements.
+#
+# Concatenating the three numbers a-b-c (in a number system with a large base) gives the specificity.
+#
+# Example(s):
+#                                                                                    
+# Some examples:
+#
+# *             {}  /* a=0 b=0 c=0 -> specificity =   0 */
+# LI            {}  /* a=0 b=0 c=1 -> specificity =   1 */
+# UL LI         {}  /* a=0 b=0 c=2 -> specificity =   2 */
+# UL OL+LI      {}  /* a=0 b=0 c=3 -> specificity =   3 */
+# H1 + *[REL=up]{}  /* a=0 b=1 c=1 -> specificity =  11 */
+# UL OL LI.red  {}  /* a=0 b=1 c=3 -> specificity =  13 */
+# LI.red.level  {}  /* a=0 b=2 c=1 -> specificity =  21 */
+# #x34y         {}  /* a=1 b=0 c=0 -> specificity = 100 */
+###########################################################################################################
+
+=pod
+
+=item specificity()
+
+Calculate the specificity for any given passed selector, a critical factor in determining how best to apply the cascade
+
+A selector's specificity is calculated as follows:
+
+* count the number of ID attributes in the selector (= a)
+* count the number of other attributes and pseudo-classes in the selector (= b)
+* count the number of element names in the selector (= c)
+* ignore pseudo-elements.
+
+The specificity is based only on the form of the selector. In particular, a selector of the form "[id=p33]" is counted
+as an attribute selector (a=0, b=0, c=1, d=0), even if the id attribute is defined as an "ID" in the source document's DTD.
+
+See the following spec for additional details:
+L<http://www.w3.org/TR/CSS21/cascade.html#specificity>
+
+=back
+
+=cut
+
+sub get_specificity {
+  my ($self,$selector) = @_;
+
+  unless (exists $self->{specificity}->{$selector}) {
+
+   # if the invoking tree happened to be large this could get expensive real fast
+   # instead load up an empty instance and query that.
+   local $self->{elements} = [];
+   $self->query($selector);
+  }
+
+  return $self->{specificity}->{$selector};
 }
 
 sub suppress_errors {
@@ -448,6 +523,14 @@ sub last {
 #
 ####################################################################
 
+sub _add_specificity {
+  my ($self, $selector, $specificity) = @_;
+
+  $self->{specificity}->{$selector} = $specificity;
+
+  return();
+}
+
 sub _report_error {
     my ($self, $message) = @_;
 
@@ -462,9 +545,9 @@ sub _report_error {
     }
 }
 
+    # this Just Works[tm] because first arg is HTML::Element object
 sub _export_query_to_element {
     class(ELEMENT)->load->method(
-        # this Just Works[tm] because first arg is HTML::Element object
         query => \&Query,
     );
 }
