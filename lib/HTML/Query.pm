@@ -1,6 +1,6 @@
 package HTML::Query;
 
-our $VERSION = '0.08';
+our $VERSION = '0.09';
 
 use Badger::Class
     version   => $VERSION,
@@ -272,7 +272,7 @@ sub query {
                     }
                 }
                 # and/or one or more pseudo-classes
-                if ($query =~ / \G : ([\w\-]+) /cgx) {
+                if ($query =~ / \G : :? ([\w\-]+) /cgx) {
                     my $pseudoclass = $1;
                     $specificity += 10;
 
@@ -456,29 +456,7 @@ sub get_elements {
 # #x34y         {}  /* a=1 b=0 c=0 -> specificity = 100 */
 ###########################################################################################################
 
-=pod
-
-=item specificity()
-
-Calculate the specificity for any given passed selector, a critical factor in determining how best to apply the cascade
-
-A selector's specificity is calculated as follows:
-
-* count the number of ID attributes in the selector (= a)
-* count the number of other attributes and pseudo-classes in the selector (= b)
-* count the number of element names in the selector (= c)
-* ignore pseudo-elements.
-
-The specificity is based only on the form of the selector. In particular, a selector of the form "[id=p33]" is counted
-as an attribute selector (a=0, b=0, c=1, d=0), even if the id attribute is defined as an "ID" in the source document's DTD.
-
-See the following spec for additional details:
-L<http://www.w3.org/TR/CSS21/cascade.html#specificity>
-
-=back
-
-=cut
-
+# calculate and return the specificity for the provided selector
 sub get_specificity {
   my ($self,$selector) = @_;
 
@@ -1144,7 +1122,7 @@ of a browser context due to their dynamic nature.
 
 Unsupported.
 
-Functionality for the :lang psuedo-class is largely replicated by using an 
+Functionality for the :lang pseudo-class is largely replicated by using an 
 attribute selector for lang combined with a universal selector query.
 
 If this is insufficient I'd love to see a patch adding support for it.
@@ -1313,6 +1291,23 @@ the results array.
 
     my @elements  = $results->query($spec)->get_elements();
     my $elements  = $results->query($spec)->get_elements();
+
+=head2 get_specificity()
+
+Calculate the specificity for any given passed selector, a critical factor in determining how best to apply the cascade
+
+A selector's specificity is calculated as follows:
+
+* count the number of ID attributes in the selector (= a)
+* count the number of other attributes and pseudo-classes in the selector (= b)
+* count the number of element names in the selector (= c)
+* ignore pseudo-elements.
+
+The specificity is based only on the form of the selector. In particular, a selector of the form "[id=p33]" is counted
+as an attribute selector (a=0, b=0, c=1, d=0), even if the id attribute is defined as an "ID" in the source document's DTD.
+
+See the following spec for additional details:
+L<http://www.w3.org/TR/CSS21/cascade.html#specificity>
 
 =head2 size()
 

@@ -1,22 +1,3 @@
-    specificity()
-        Calculate the specificity for any given passed selector, a critical
-        factor in determining how best to apply the cascade
-
-        A selector's specificity is calculated as follows:
-
-        * count the number of ID attributes in the selector (= a) * count
-        the number of other attributes and pseudo-classes in the selector (=
-        b) * count the number of element names in the selector (= c) *
-        ignore pseudo-elements.
-
-        The specificity is based only on the form of the selector. In
-        particular, a selector of the form "[id=p33]" is counted as an
-        attribute selector (a=0, b=0, c=1, d=0), even if the id attribute is
-        defined as an "ID" in the source document's DTD.
-
-        See the following spec for additional details:
-        <http://www.w3.org/TR/CSS21/cascade.html#specificity>
-
 NAME
     HTML::Query - jQuery-like selection queries for HTML::Element
 
@@ -491,7 +472,7 @@ QUERY SYNTAX
    Language pseudo-class
     Unsupported.
 
-    Functionality for the :lang psuedo-class is largely replicated by using
+    Functionality for the :lang pseudo-class is largely replicated by using
     an attribute selector for lang combined with a universal selector query.
 
     If this is insufficient I'd love to see a patch adding support for it.
@@ -650,6 +631,25 @@ METHODS
         my @elements  = $results->query($spec)->get_elements();
         my $elements  = $results->query($spec)->get_elements();
 
+  get_specificity()
+    Calculate the specificity for any given passed selector, a critical
+    factor in determining how best to apply the cascade
+
+    A selector's specificity is calculated as follows:
+
+    * count the number of ID attributes in the selector (= a) * count the
+    number of other attributes and pseudo-classes in the selector (= b) *
+    count the number of element names in the selector (= c) * ignore
+    pseudo-elements.
+
+    The specificity is based only on the form of the selector. In
+    particular, a selector of the form "[id=p33]" is counted as an attribute
+    selector (a=0, b=0, c=1, d=0), even if the id attribute is defined as an
+    "ID" in the source document's DTD.
+
+    See the following spec for additional details:
+    <http://www.w3.org/TR/CSS21/cascade.html#specificity>
+
   size()
     Returns the number of elements in the query.
 
@@ -710,11 +710,4 @@ COPYRIGHT
 SEE ALSO
     HTML::Tree, HTML::Element, HTML::TreeBuilder, pQuery,
     <http://jQuery.com/>
-
-POD ERRORS
-    Hey! The above document had some coding errors, which are explained
-    below:
-
-    Around line 461:
-        '=item' outside of any '=over'
 
